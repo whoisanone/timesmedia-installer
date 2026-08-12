@@ -86,6 +86,7 @@ if (( live )); then
   userdel timesmedia-web 2>/dev/null || true
   groupdel timesmedia-web 2>/dev/null || true
   find /run -maxdepth 1 -type f \( -name 'timesmedia-gh-token.*' -o -name 'timesmedia-askpass.*' \) -mmin +10 -delete 2>/dev/null || true
+  find /tmp -maxdepth 1 -type d -name 'timesmedia-auth.*' -mmin +10 -exec rm -rf -- {} + 2>/dev/null || true
   find /tmp -maxdepth 1 -type d -name 'timesmedia-bootstrap.*' -mmin +10 -exec rm -rf -- {} + 2>/dev/null || true
 fi
 

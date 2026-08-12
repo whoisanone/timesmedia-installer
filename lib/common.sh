@@ -33,7 +33,8 @@ secure_mkdir(){ local owner="$1" mode="$2" path="$3"; install -d -m "$mode" -o "
 _tm_cleanup_auth(){
   [[ -n "${TM_TOKEN_FILE:-}" ]] && rm -f -- "$TM_TOKEN_FILE" || true
   [[ -n "${TM_ASKPASS:-}" ]] && rm -f -- "$TM_ASKPASS" || true
-  TM_TOKEN_FILE=""; TM_ASKPASS=""
+  [[ -n "${TM_AUTH_DIR:-}" ]] && rm -rf -- "$TM_AUTH_DIR" || true
+  TM_TOKEN_FILE=""; TM_ASKPASS=""; TM_AUTH_DIR=""
 }
 
 _tm_cleanup(){
@@ -44,16 +45,22 @@ _tm_cleanup(){
 }
 
 _tm_prepare_token_auth(){
-  local token
+  local token auth_tmpdir
   if ! read -r -s -p "GitHub token (Fine-grained, Contents: Read-only): " token; then
     printf '\n'
     die "No hay una terminal interactiva para leer el token de GitHub."
   fi
   printf '\n'
   [[ ${#token} -ge 20 ]] || die "Token demasiado corto o vacío."
-  TM_TOKEN_FILE=$(mktemp /run/timesmedia-gh-token.XXXXXX)
-  TM_ASKPASS=$(mktemp /run/timesmedia-askpass.XXXXXX)
-  chmod 600 "$TM_TOKEN_FILE"; printf '%s' "$token" > "$TM_TOKEN_FILE"; unset token
+  # Some distributions mount /run with noexec. Git must execute GIT_ASKPASS,
+  # so keep both files inside a private directory on the same executable
+  # temporary filesystem from which bootstrap.sh is already running.
+  auth_tmpdir="${TM_AUTH_TMPDIR:-${TMPDIR:-/tmp}}"
+  TM_AUTH_DIR=$(mktemp -d "${auth_tmpdir%/}/timesmedia-auth.XXXXXX")
+  chmod 700 "$TM_AUTH_DIR"
+  TM_TOKEN_FILE="$TM_AUTH_DIR/token"
+  TM_ASKPASS="$TM_AUTH_DIR/askpass"
+  (umask 077; printf '%s' "$token" > "$TM_TOKEN_FILE"); unset token
   cat > "$TM_ASKPASS" <<EOFASK
 #!/usr/bin/env bash
 case "\$1" in
