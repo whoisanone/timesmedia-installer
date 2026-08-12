@@ -1,7 +1,7 @@
 # Seguridad del instalador
 
 - No almacena PAT de GitHub en repositorios, archivos de configuración permanentes ni URLs de clone.
-- Prefiere deploy key SSH; el fallback de PAT usa `GIT_ASKPASS` con archivo temporal `0600` en `/run` y cleanup por trap.
+- Prefiere deploy key SSH; el fallback de PAT usa `GIT_ASKPASS` dentro de un directorio temporal privado `0700`, con token `0600` y cleanup por trap.
 - Los secretos de aplicación se crean fuera de Git y con modo `0600`.
 - La contraseña inicial del admin se pide sin eco y no se guarda en el environment file.
 - El token NODE se genera con `openssl rand -hex 32`.
