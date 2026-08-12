@@ -57,5 +57,6 @@ venv_line=$(grep -nF 'python_venv_build_as timesmedia-node "$NODE_CODE"' "$insta
 grep -Fq 'node) install_node "${2:-}"' "$install_script" || fail "Falta routing de node --fresh"
 grep -Fq 'fresh_node_reset' "$install_script" || fail "Falta reset limpio de NODE"
 grep -Fq 'web_ip="${TM_WEB_IP:-}"' "$install_script" || fail "Falta IP WEB no interactiva"
+grep -Fq 'python_module_check_as timesmedia-node "$NODE_CODE" gunicorn --version' "$install_script" || fail "La comprobación de Gunicorn no fija un cwd accesible"
 
 printf 'OK: common runtime regressions\n'

@@ -256,7 +256,7 @@ install_node(){
   local mode="${1:-}"
   [[ -z "$mode" || "$mode" == "--fresh" ]] || die "Uso: $0 node [--fresh]"
   [[ "$mode" != "--fresh" ]] || TM_FRESH_NODE=1
-  log "Preparando TimesMedia NODE 8.1.2..."
+  log "Preparando TimesMedia NODE 8.1.3..."
   apt_install aria2 ca-certificates curl ffmpeg git openssl python3 python3-venv
   install -d -m 755 /opt /etc/timesmedia /srv/timesmedia
 
@@ -315,7 +315,7 @@ install_node(){
   if ! python_venv_build_as timesmedia-node "$NODE_CODE"; then
     die "No se pudo construir el entorno Python del NODE en su ruta final."
   fi
-  if ! runuser -u timesmedia-node -- "$NODE_CODE/.venv/bin/python" -m gunicorn --version >/dev/null; then
+  if ! python_module_check_as timesmedia-node "$NODE_CODE" gunicorn --version >/dev/null; then
     die "Gunicorn no es ejecutable desde el entorno final del NODE."
   fi
   install -m 644 "$NODE_CODE/deploy/systemd/timesmedia-node.service" /etc/systemd/system/timesmedia-node.service

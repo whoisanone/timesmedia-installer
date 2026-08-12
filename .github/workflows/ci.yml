@@ -22,10 +22,18 @@ jobs:
           bash -n install-timesmedia.sh
           bash -n timesmedia
           bash -n lib/common.sh
+          bash -n purge-node.sh
+          bash -n tests/test_common.sh
+          bash -n tests/test_final_venv.sh
+          bash -n tests/test_purge_node.sh
       - name: ShellCheck warnings
-        run: shellcheck -S warning bootstrap.sh install-timesmedia.sh timesmedia lib/common.sh tests/test_common.sh
+        run: shellcheck -S warning bootstrap.sh install-timesmedia.sh timesmedia lib/common.sh purge-node.sh tests/test_common.sh tests/test_final_venv.sh tests/test_purge_node.sh
       - name: Runtime regression tests
         run: bash tests/test_common.sh
+      - name: NODE purge isolation test
+        run: bash tests/test_purge_node.sh
+      - name: Inaccessible bootstrap cwd integration test
+        run: sudo bash tests/test_final_venv.sh
       - name: Secret guard
         run: |
           ! git grep -nE 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY'
