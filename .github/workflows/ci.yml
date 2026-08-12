@@ -22,8 +22,8 @@ jobs:
           bash -n install-timesmedia.sh
           bash -n timesmedia
           bash -n lib/common.sh
-      - name: ShellCheck errors
-        run: shellcheck -S error bootstrap.sh install-timesmedia.sh timesmedia lib/common.sh
+      - name: ShellCheck warnings
+        run: shellcheck -S warning bootstrap.sh install-timesmedia.sh timesmedia lib/common.sh tests/test_common.sh
       - name: Runtime regression tests
         run: bash tests/test_common.sh
       - name: Secret guard
