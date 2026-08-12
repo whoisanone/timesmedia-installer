@@ -40,14 +40,14 @@ grep -q 'No hay una terminal interactiva' "$TEST_TMP/auth.err" || fail "Falta er
 # GIT_ASKPASS must live on an executable temporary filesystem. Ubuntu may
 # mount /run with noexec, which previously made a valid token look invalid.
 mkdir -p "$TEST_TMP/auth-tmp"
-TM_AUTH_TMPDIR="$TEST_TMP/auth-tmp" _tm_prepare_token_auth <<<'github_pat_abcdefghijklmnopqrstuvwxyz'
+TM_AUTH_TMPDIR="$TEST_TMP/auth-tmp" _tm_prepare_token_auth <<<'timesmedia-test-token-1234567890'
 auth_dir="$TM_AUTH_DIR"
 [[ "$TM_ASKPASS" == "$TEST_TMP/auth-tmp"/timesmedia-auth.*/askpass ]] || fail "askpass no usa el temporal ejecutable"
 [[ "$(stat -c '%a' "$TM_AUTH_DIR")" == 700 ]] || fail "Directorio auth no es 0700"
 [[ "$(stat -c '%a' "$TM_TOKEN_FILE")" == 600 ]] || fail "Token temporal no es 0600"
 [[ "$(stat -c '%a' "$TM_ASKPASS")" == 700 ]] || fail "askpass no es ejecutable"
 [[ "$("$TM_ASKPASS" 'Username for https://github.com')" == x-access-token ]] || fail "askpass no entrega usuario"
-[[ "$("$TM_ASKPASS" 'Password for https://github.com')" == github_pat_abcdefghijklmnopqrstuvwxyz ]] || fail "askpass no entrega token"
+[[ "$("$TM_ASKPASS" 'Password for https://github.com')" == timesmedia-test-token-1234567890 ]] || fail "askpass no entrega token"
 _tm_cleanup_auth
 assert_missing "$auth_dir"
 
