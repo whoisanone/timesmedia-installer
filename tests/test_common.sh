@@ -79,5 +79,8 @@ grep -Fq 'web) install_web "${2:-}"' "$install_script" || fail "Falta routing de
 grep -Fq 'fresh_web_reset' "$install_script" || fail "Falta reset limpio de WEB"
 grep -Fq 'python_module_check_as timesmedia-web "$WEB_CODE" gunicorn --version' "$install_script" || fail "La comprobación WEB no usa el venv final"
 grep -Fq "mapfile -t web_environment" "$install_script" || fail "La comprobación WEB intenta leer web.env como usuario sin privilegios"
+grep -Fq 'wait_http http://127.0.0.1:5000/ 5' "$install_script" || fail "La instalación WEB no comprueba la portada"
+grep -Fq 'INSTALLER_VERSION=$(<"$SCRIPT_DIR/VERSION")' "$install_script" || fail "La versión mostrada por el instalador sigue hardcodeada"
+grep -Fq 'curl -fsS --max-time 4 http://127.0.0.1:5000/ >/dev/null' "$ROOT/timesmedia" || fail "timesmedia health no comprueba la portada"
 
 printf 'OK: common runtime regressions\n'
