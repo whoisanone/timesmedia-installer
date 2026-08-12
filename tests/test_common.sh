@@ -37,6 +37,20 @@ if (_tm_prepare_token_auth </dev/null) >"$TEST_TMP/auth.out" 2>"$TEST_TMP/auth.e
 fi
 grep -q 'No hay una terminal interactiva' "$TEST_TMP/auth.err" || fail "Falta error claro sin terminal"
 
+# GIT_ASKPASS must live on an executable temporary filesystem. Ubuntu may
+# mount /run with noexec, which previously made a valid token look invalid.
+mkdir -p "$TEST_TMP/auth-tmp"
+TM_AUTH_TMPDIR="$TEST_TMP/auth-tmp" _tm_prepare_token_auth <<<'github_pat_abcdefghijklmnopqrstuvwxyz'
+auth_dir="$TM_AUTH_DIR"
+[[ "$TM_ASKPASS" == "$TEST_TMP/auth-tmp"/timesmedia-auth.*/askpass ]] || fail "askpass no usa el temporal ejecutable"
+[[ "$(stat -c '%a' "$TM_AUTH_DIR")" == 700 ]] || fail "Directorio auth no es 0700"
+[[ "$(stat -c '%a' "$TM_TOKEN_FILE")" == 600 ]] || fail "Token temporal no es 0600"
+[[ "$(stat -c '%a' "$TM_ASKPASS")" == 700 ]] || fail "askpass no es ejecutable"
+[[ "$("$TM_ASKPASS" 'Username for https://github.com')" == x-access-token ]] || fail "askpass no entrega usuario"
+[[ "$("$TM_ASKPASS" 'Password for https://github.com')" == github_pat_abcdefghijklmnopqrstuvwxyz ]] || fail "askpass no entrega token"
+_tm_cleanup_auth
+assert_missing "$auth_dir"
+
 # An interrupted previous run must not leave a full orphaned venv forever.
 mkdir -p "$TEST_TMP/stages/.timesmedia-node.stage.999999999" "$TEST_TMP/stages/.timesmedia-node.stage.$$"
 cleanup_stale_stages "$TEST_TMP/stages" timesmedia-node "$TEST_TMP/stages/.timesmedia-node.stage.$$"
