@@ -46,4 +46,16 @@ assert_missing "$TEST_TMP/stages/.timesmedia-node.stage.999999999"
 # Keep the curl-pipe terminal handoff covered by CI.
 grep -Fq 'exec ./install-timesmedia.sh "$@" </dev/tty' "$ROOT/bootstrap.sh" || fail "bootstrap no reconecta /dev/tty"
 
+# Venvs with console-script shebangs must be built at their final path.
+install_script="$ROOT/install-timesmedia.sh"
+if sed -n '/^install_node(){/,/^install_cli(){/p' "$install_script" | grep -Fq 'python3 -m venv "$stage/.venv"'; then
+  fail "NODE todavía construye el venv en staging"
+fi
+swap_line=$(grep -nF 'swap_code "$stage" "$NODE_CODE"' "$install_script" | tail -n1 | cut -d: -f1)
+venv_line=$(grep -nF 'python_venv_build_as timesmedia-node "$NODE_CODE"' "$install_script" | tail -n1 | cut -d: -f1)
+[[ -n "$swap_line" && -n "$venv_line" && "$venv_line" -gt "$swap_line" ]] || fail "El venv NODE no se construye después del swap final"
+grep -Fq 'node) install_node "${2:-}"' "$install_script" || fail "Falta routing de node --fresh"
+grep -Fq 'fresh_node_reset' "$install_script" || fail "Falta reset limpio de NODE"
+grep -Fq 'web_ip="${TM_WEB_IP:-}"' "$install_script" || fail "Falta IP WEB no interactiva"
+
 printf 'OK: common runtime regressions\n'

@@ -1,4 +1,4 @@
-# TimesMedia Installer 8.1.0
+# TimesMedia Installer 8.1.2
 
 Instalador y CLI de mantenimiento para los repositorios privados de TimesMedia.
 
@@ -9,6 +9,14 @@ Instalación directa del NODE con un único comando:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/main/bootstrap.sh | sudo bash -s -- node
 ```
+
+Reinstalación completamente limpia del NODE, sin migrar MediaVPS ni conservar su multimedia:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/main/bootstrap.sh | sudo env TM_WEB_IP=IP_DEL_CONTROLADOR bash -s -- node --fresh
+```
+
+El modo `node --fresh` obtiene y valida primero el repositorio privado; después detiene y elimina exclusivamente los servicios, código, estado, configuración y multimedia del NODE anterior. No modifica TimesMedia WEB ni otros proyectos del servidor.
 
 También puede ejecutarse desde un checkout o ZIP:
 

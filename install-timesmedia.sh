@@ -15,6 +15,7 @@ NODE_ENV=/etc/timesmedia/node.env
 TM_NODE_CUTOVER_ACTIVE=0
 TM_NODE_STATE_BACKUP=""
 TM_MEDIA_MOVED=0
+TM_FRESH_NODE=0
 
 installer_cleanup(){
   local rc="$1"
@@ -220,7 +221,9 @@ rollback_node_legacy(){
     mv "$TM_NODE_STATE_BACKUP" "$NODE_STATE" || true
   fi
   TM_MEDIA_MOVED=0; TM_NODE_STATE_BACKUP=""; TM_NODE_CUTOVER_ACTIVE=0
-  systemctl start mediavps-node.service mediavps-worker.service 2>/dev/null || true
+  if [[ "$TM_FRESH_NODE" != 1 ]]; then
+    systemctl start mediavps-node.service mediavps-worker.service 2>/dev/null || true
+  fi
 }
 
 commit_node_legacy(){
@@ -230,28 +233,58 @@ commit_node_legacy(){
   TM_MEDIA_MOVED=0; TM_NODE_STATE_BACKUP=""; TM_NODE_CUTOVER_ACTIVE=0
 }
 
+fresh_node_reset(){
+  log "Modo limpio: eliminando exclusivamente instalaciones NODE anteriores..."
+  systemctl disable --now \
+    timesmedia-node.service timesmedia-worker.service \
+    mediavps-node.service mediavps-worker.service 2>/dev/null || true
+  rm -f -- \
+    /etc/systemd/system/timesmedia-node.service \
+    /etc/systemd/system/timesmedia-worker.service \
+    /etc/systemd/system/mediavps-node.service \
+    /etc/systemd/system/mediavps-worker.service
+  rm -rf -- \
+    /etc/systemd/system/timesmedia-node.service.d \
+    "$NODE_CODE" "${NODE_CODE}.previous" \
+    "$NODE_STATE" "$NODE_MEDIA" "$NODE_ENV" \
+    /root/mediavps-node /mediavps-node /root/mediavps-storage
+  systemctl daemon-reload
+  ok "NODE anterior eliminado; WEB y otros proyectos no fueron modificados."
+}
+
 install_node(){
-  log "Preparando TimesMedia NODE 8.1..."
+  local mode="${1:-}"
+  [[ -z "$mode" || "$mode" == "--fresh" ]] || die "Uso: $0 node [--fresh]"
+  [[ "$mode" != "--fresh" ]] || TM_FRESH_NODE=1
+  log "Preparando TimesMedia NODE 8.1.2..."
   apt_install aria2 ca-certificates curl ffmpeg git openssl python3 python3-venv
-  ensure_user timesmedia-node "$NODE_STATE"
   install -d -m 755 /opt /etc/timesmedia /srv/timesmedia
+
+  # Authenticate and obtain a complete source checkout before deleting anything.
+  atomic_code_install "$TM_NODE_REPO" "$NODE_CODE"
+  local stage="$TM_STAGE"
+  [[ -f "$stage/requirements.txt" && -f "$stage/.env.node.example" ]] || die "El repositorio NODE está incompleto."
+  [[ -f "$stage/deploy/systemd/timesmedia-node.service" && -f "$stage/deploy/systemd/timesmedia-worker.service" ]] || die "Faltan unidades systemd del NODE."
+
+  if [[ "$TM_FRESH_NODE" == 1 ]]; then
+    fresh_node_reset
+  fi
+
+  ensure_user timesmedia-node "$NODE_STATE"
   secure_mkdir timesmedia-node 700 "$NODE_STATE"
   for d in cache posters fallback hls torrents aria2; do secure_mkdir timesmedia-node 700 "$NODE_STATE/$d"; done
   secure_mkdir timesmedia-node 750 "$NODE_MEDIA"
 
-  atomic_code_install "$TM_NODE_REPO" "$NODE_CODE"
-  local stage="$TM_STAGE"
   chown -R timesmedia-node:timesmedia-node "$stage"
-  runuser -u timesmedia-node -- python3 -m venv "$stage/.venv"
-  runuser -u timesmedia-node -- "$stage/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-  runuser -u timesmedia-node -- "$stage/.venv/bin/pip" install --requirement "$stage/requirements.txt"
-  runuser -u timesmedia-node -- "$stage/.venv/bin/python" -m compileall -q "$stage"
 
   if [[ ! -f "$NODE_ENV" ]]; then
     install -m 600 -o root -g root "$stage/.env.node.example" "$NODE_ENV"
     local token web_ip fs mem_kb cache cores trans
     token=$(openssl rand -hex 32); write_kv "$NODE_ENV" NODE_TOKEN "$token"; unset token
-    read -r -p "IP pública/privada del controlador WEB autorizada para 5100: " web_ip
+    web_ip="${TM_WEB_IP:-}"
+    if [[ -z "$web_ip" ]]; then
+      read -r -p "IP pública/privada del controlador WEB autorizada para 5100: " web_ip
+    fi
     [[ "$web_ip" =~ ^[0-9A-Fa-f:.]+$ ]] || die "IP WEB inválida."
     write_kv "$NODE_ENV" TIMESMEDIA_WEB_IP "$web_ip"
     fs=$(findmnt -no FSTYPE --target "$NODE_MEDIA" 2>/dev/null || echo unknown)
@@ -264,18 +297,27 @@ install_node(){
     chmod 600 "$NODE_ENV"
   fi
 
-  legacy_node_migrate
-  preflight_node_cutover_migration
-  if service_active mediavps-node.service && [[ "${TM_LEGACY_MIGRATE:-0}" != 1 ]]; then
-    warn "MediaVPS NODE sigue activo en 5100 y la migración fue omitida."
-    warn "No tocaré el servicio ni el storage activo. Ejecuta el instalador otra vez cuando quieras hacer el corte."
-    rm -rf -- "$stage"
-    install_cli
-    return 0
+  if [[ "$TM_FRESH_NODE" != 1 ]]; then
+    legacy_node_migrate
+    preflight_node_cutover_migration
+    if service_active mediavps-node.service && [[ "${TM_LEGACY_MIGRATE:-0}" != 1 ]]; then
+      warn "MediaVPS NODE sigue activo en 5100 y la migración fue omitida."
+      warn "No tocaré el servicio ni el storage activo. Usa 'node --fresh' para reemplazarlo sin migrar."
+      rm -rf -- "$stage"
+      install_cli
+      return 0
+    fi
   fi
   systemctl stop timesmedia-node.service timesmedia-worker.service 2>/dev/null || true
+  TM_NODE_CUTOVER_ACTIVE=1
   swap_code "$stage" "$NODE_CODE"
   chown -R timesmedia-node:timesmedia-node "$NODE_CODE"
+  if ! python_venv_build_as timesmedia-node "$NODE_CODE"; then
+    die "No se pudo construir el entorno Python del NODE en su ruta final."
+  fi
+  if ! runuser -u timesmedia-node -- "$NODE_CODE/.venv/bin/python" -m gunicorn --version >/dev/null; then
+    die "Gunicorn no es ejecutable desde el entorno final del NODE."
+  fi
   install -m 644 "$NODE_CODE/deploy/systemd/timesmedia-node.service" /etc/systemd/system/timesmedia-node.service
   install -m 644 "$NODE_CODE/deploy/systemd/timesmedia-worker.service" /etc/systemd/system/timesmedia-worker.service
   systemctl daemon-reload
@@ -371,8 +413,8 @@ MENU
 
 case "${1:-}" in
   web) install_web;;
-  node) install_node;;
+  node) install_node "${2:-}";;
   all) install_web; install_node;;
   "") menu;;
-  *) die "Uso: $0 [web|node|all]";;
+  *) die "Uso: $0 [web|node [--fresh]|all]";;
 esac
