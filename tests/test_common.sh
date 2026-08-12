@@ -58,5 +58,12 @@ grep -Fq 'node) install_node "${2:-}"' "$install_script" || fail "Falta routing 
 grep -Fq 'fresh_node_reset' "$install_script" || fail "Falta reset limpio de NODE"
 grep -Fq 'web_ip="${TM_WEB_IP:-}"' "$install_script" || fail "Falta IP WEB no interactiva"
 grep -Fq 'python_module_check_as timesmedia-node "$NODE_CODE" gunicorn --version' "$install_script" || fail "La comprobación de Gunicorn no fija un cwd accesible"
+web_swap_line=$(grep -nF 'swap_code "$stage" "$WEB_CODE"' "$install_script" | head -n1 | cut -d: -f1)
+web_venv_line=$(grep -nF 'python_venv_build_as timesmedia-web "$WEB_CODE"' "$install_script" | head -n1 | cut -d: -f1)
+[[ -n "$web_swap_line" && -n "$web_venv_line" && "$web_venv_line" -gt "$web_swap_line" ]] || fail "El venv WEB no se construye después del swap final"
+grep -Fq 'web) install_web "${2:-}"' "$install_script" || fail "Falta routing de web --fresh"
+grep -Fq 'fresh_web_reset' "$install_script" || fail "Falta reset limpio de WEB"
+grep -Fq 'python_module_check_as timesmedia-web "$WEB_CODE" gunicorn --version' "$install_script" || fail "La comprobación WEB no usa el venv final"
+grep -Fq "mapfile -t web_environment" "$install_script" || fail "La comprobación WEB intenta leer web.env como usuario sin privilegios"
 
 printf 'OK: common runtime regressions\n'

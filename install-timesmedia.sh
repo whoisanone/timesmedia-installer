@@ -16,6 +16,7 @@ TM_NODE_CUTOVER_ACTIVE=0
 TM_NODE_STATE_BACKUP=""
 TM_MEDIA_MOVED=0
 TM_FRESH_NODE=0
+TM_FRESH_WEB=0
 
 installer_cleanup(){
   local rc="$1"
@@ -77,26 +78,74 @@ PY
   ok "Estado WEB copiado. MediaVPS antiguo sigue intacto."
 }
 
+fresh_web_reset(){
+  log "Modo limpio: eliminando exclusivamente instalaciones WEB anteriores..."
+  systemctl disable --now \
+    timesmedia-web.service timesmedia-scheduler.service \
+    mediavps.service mediavps-web.service mediavps-scheduler.service 2>/dev/null || true
+  local process_pattern service unit_root
+  process_pattern='(/opt/timesmedia-web|/home/ubuntu/web/mediavps|/root/mediavps-web|/mediavps-web)'
+  pkill -TERM -f -- "$process_pattern" 2>/dev/null || true
+  sleep 1
+  pkill -KILL -f -- "$process_pattern" 2>/dev/null || true
+  for unit_root in /etc/systemd/system /lib/systemd/system /usr/lib/systemd/system; do
+    for service in \
+      timesmedia-web.service timesmedia-scheduler.service \
+      mediavps.service mediavps-web.service mediavps-scheduler.service; do
+      rm -f -- "$unit_root/$service"
+    done
+  done
+  rm -rf -- \
+    /etc/systemd/system/timesmedia-web.service.d \
+    /etc/systemd/system/timesmedia-scheduler.service.d \
+    "$WEB_CODE" "${WEB_CODE}.previous" \
+    "$WEB_STATE" "$WEB_ENV" \
+    /home/ubuntu/web/mediavps /root/mediavps-web /mediavps-web
+  systemctl daemon-reload
+  userdel timesmedia-web 2>/dev/null || true
+  groupdel timesmedia-web 2>/dev/null || true
+  if command -v ss >/dev/null 2>&1 && ss -lntup 2>/dev/null | grep -Eq ':5000\b'; then
+    die "El puerto 5000 sigue ocupado por otro proceso; no instalaré encima de otro proyecto."
+  fi
+  ok "WEB anterior eliminado; cloudflared, SSH, NODE y otros proyectos no fueron modificados."
+}
+
 install_web(){
-  log "Preparando TimesMedia WEB 8.1..."
+  local mode="${1:-}"
+  [[ -z "$mode" || "$mode" == "--fresh" ]] || die "Uso: $0 web [--fresh]"
+  [[ "$mode" != "--fresh" ]] || TM_FRESH_WEB=1
+  log "Preparando TimesMedia WEB 8.1.4..."
   apt_install ca-certificates curl git python3 python3-venv
+  install -d -m 755 /opt /etc/timesmedia
+
+  # Obtain and validate a complete private checkout before deleting anything.
+  atomic_code_install "$TM_WEB_REPO" "$WEB_CODE"
+  local stage="$TM_STAGE"
+  local required
+  for required in \
+    requirements.txt .env.example app.py manage.py scheduler.py scripts/vendor_hls.py \
+    deploy/systemd/timesmedia-web.service deploy/systemd/timesmedia-scheduler.service \
+    static/admin.js static/media.js; do
+    [[ -f "$stage/$required" ]] || die "El repositorio WEB está incompleto: falta $required"
+  done
+
+  if [[ "$TM_FRESH_WEB" == 1 ]]; then
+    fresh_web_reset
+  fi
+
   ensure_user timesmedia-web "$WEB_STATE"
   install -d -m 755 /opt /etc/timesmedia
   secure_mkdir timesmedia-web 700 "$WEB_STATE"
   for d in covers features cache vendor; do secure_mkdir timesmedia-web 700 "$WEB_STATE/$d"; done
-
-  atomic_code_install "$TM_WEB_REPO" "$WEB_CODE"
-  local stage="$TM_STAGE"
   chown -R timesmedia-web:timesmedia-web "$stage"
-  runuser -u timesmedia-web -- python3 -m venv "$stage/.venv"
-  runuser -u timesmedia-web -- "$stage/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-  runuser -u timesmedia-web -- "$stage/.venv/bin/pip" install --requirement "$stage/requirements.txt"
-  runuser -u timesmedia-web -- "$stage/.venv/bin/python" -m compileall -q "$stage"
 
   if [[ ! -f "$WEB_ENV" ]]; then
     install -m 600 -o root -g root "$stage/.env.example" "$WEB_ENV"
     local domain
-    read -r -p "Dominio público (ej. app.example.com; vacío = solo localhost): " domain
+    domain="${TM_WEB_DOMAIN:-}"
+    if [[ -z "$domain" ]]; then
+      read -r -p "Dominio público (ej. app.example.com; vacío = solo localhost): " domain
+    fi
     if [[ -n "$domain" ]]; then
       [[ "$domain" =~ ^[A-Za-z0-9.-]+$ ]] || die "Dominio inválido."
       write_kv "$WEB_ENV" TRUSTED_HOSTS "$domain,localhost,127.0.0.1"
@@ -112,14 +161,30 @@ install_web(){
     chmod 600 "$WEB_ENV"
   fi
 
-  legacy_web_migrate
-  if ! runuser -u timesmedia-web -- env TIMESMEDIA_VENDOR_DIR="$WEB_STATE/vendor" "$stage/.venv/bin/python" "$stage/scripts/vendor_hls.py" --dest "$WEB_STATE/vendor/hls.min.js"; then
-    warn "No pude descargar hls.js ahora. Se conservará el fallback fMP4 hasta 'timesmedia repair'."
+  if [[ "$TM_FRESH_WEB" != 1 ]]; then
+    legacy_web_migrate
   fi
 
   systemctl stop timesmedia-web.service timesmedia-scheduler.service 2>/dev/null || true
   swap_code "$stage" "$WEB_CODE"
   chown -R timesmedia-web:timesmedia-web "$WEB_CODE"
+  if ! python_venv_build_as timesmedia-web "$WEB_CODE"; then
+    rollback_code "$WEB_CODE"
+    die "No se pudo construir el entorno Python del WEB en su ruta final."
+  fi
+  if ! python_module_check_as timesmedia-web "$WEB_CODE" gunicorn --version >/dev/null; then
+    rollback_code "$WEB_CODE"
+    die "Gunicorn no es ejecutable desde el entorno final del WEB."
+  fi
+  local -a web_environment=()
+  mapfile -t web_environment < <(sed -nE '/^[A-Za-z_][A-Za-z0-9_]*=/p' "$WEB_ENV")
+  if ! (cd "$WEB_CODE" && runuser -u timesmedia-web -- env "${web_environment[@]}" "$WEB_CODE/.venv/bin/python" -c 'from app import app; assert app'); then
+    rollback_code "$WEB_CODE"
+    die "La aplicación WEB no se puede importar desde su instalación final."
+  fi
+  if ! (cd "$WEB_CODE" && runuser -u timesmedia-web -- env TIMESMEDIA_VENDOR_DIR="$WEB_STATE/vendor" "$WEB_CODE/.venv/bin/python" scripts/vendor_hls.py --dest "$WEB_STATE/vendor/hls.min.js"); then
+    warn "No pude descargar hls.js ahora. Se conservará el reproductor HTML5 directo."
+  fi
   install -m 644 "$WEB_CODE/deploy/systemd/timesmedia-web.service" /etc/systemd/system/timesmedia-web.service
   install -m 644 "$WEB_CODE/deploy/systemd/timesmedia-scheduler.service" /etc/systemd/system/timesmedia-scheduler.service
   systemctl daemon-reload
@@ -135,7 +200,7 @@ install_web(){
     unset password REPLY
   fi
 
-  if service_exists mediavps.service && service_active mediavps.service; then
+  if [[ "$TM_FRESH_WEB" != 1 ]] && service_exists mediavps.service && service_active mediavps.service; then
     warn "mediavps.service sigue usando el puerto 5000. Para el corte final debe detenerse."
     if confirm "¿Detener MediaVPS WEB y activar TimesMedia ahora?"; then
       systemctl stop mediavps.service
@@ -149,14 +214,14 @@ install_web(){
 
   if ! systemctl enable --now timesmedia-web.service timesmedia-scheduler.service; then
     rollback_code "$WEB_CODE"; systemctl daemon-reload
-    service_exists mediavps.service && systemctl start mediavps.service 2>/dev/null || true
+    [[ "$TM_FRESH_WEB" == 1 ]] || { service_exists mediavps.service && systemctl start mediavps.service 2>/dev/null || true; }
     die "TimesMedia WEB no inició; código revertido y MediaVPS intentó restaurarse."
   fi
   if ! wait_http http://127.0.0.1:5000/health 30; then
     journalctl -u timesmedia-web.service -n 40 --no-pager >&2 || true
     systemctl stop timesmedia-web.service timesmedia-scheduler.service || true
     rollback_code "$WEB_CODE"
-    service_exists mediavps.service && systemctl start mediavps.service 2>/dev/null || true
+    [[ "$TM_FRESH_WEB" == 1 ]] || { service_exists mediavps.service && systemctl start mediavps.service 2>/dev/null || true; }
     die "Health check WEB falló; se ejecutó rollback."
   fi
   install_cli
@@ -393,28 +458,36 @@ menu(){
 ╔════════════════════════════════╗
 ║      TimesMedia Installer      ║
 ╠════════════════════════════════╣
-║ 1. Instalar / migrar WEB       ║
-║ 2. Instalar / migrar NODE      ║
-║ 3. Instalar WEB + NODE         ║
-║ 4. Security check              ║
-║ 5. Salir                       ║
+║ 1. Instalar WEB desde cero     ║
+║ 2. Instalar NODE desde cero    ║
+║ 3. Instalar ambos desde cero   ║
+║ 4. Actualizar / migrar WEB     ║
+║ 5. Actualizar / migrar NODE    ║
+║ 6. Security check              ║
+║ 7. Salir                       ║
 ╚════════════════════════════════╝
 MENU
   local choice; read -r -p "Opción: " choice
   case "$choice" in
-    1) install_web;;
-    2) install_node;;
-    3) install_web; install_node;;
-    4) install_cli; /usr/local/sbin/timesmedia security-check;;
-    5) exit 0;;
+    1) install_web --fresh;;
+    2) install_node --fresh;;
+    3) install_web --fresh; install_node --fresh;;
+    4) install_web;;
+    5) install_node;;
+    6) install_cli; /usr/local/sbin/timesmedia security-check;;
+    7) exit 0;;
     *) die "Opción inválida.";;
   esac
 }
 
 case "${1:-}" in
-  web) install_web;;
+  web) install_web "${2:-}";;
   node) install_node "${2:-}";;
-  all) install_web; install_node;;
+  all)
+    [[ -z "${2:-}" || "${2:-}" == "--fresh" ]] || die "Uso: $0 all [--fresh]"
+    install_web "${2:-}"
+    install_node "${2:-}"
+    ;;
   "") menu;;
-  *) die "Uso: $0 [web|node [--fresh]|all]";;
+  *) die "Uso: $0 [web [--fresh]|node [--fresh]|all [--fresh]]";;
 esac
