@@ -1,4 +1,4 @@
-# TimesMedia Installer 8.1.4
+# TimesMedia Installer 8.1.5
 
 Instalador y CLI de mantenimiento para los repositorios privados de TimesMedia.
 
@@ -50,7 +50,7 @@ También puede ejecutarse desde un checkout o ZIP:
 sudo ./install-timesmedia.sh
 ```
 
-El menú instala WEB, NODE o ambos. Los repos `timesmedia-web` y `timesmedia-node` permanecen privados: el instalador intenta primero una clave SSH/deploy key ya configurada y, si no existe, solicita un Fine-grained GitHub token con **Contents: Read-only**. El token se guarda únicamente en un archivo temporal `0600` bajo `/run`, se usa a través de `GIT_ASKPASS` y se elimina al terminar; no se inserta en la URL de Git ni en la línea de comandos.
+El menú instala WEB, NODE o ambos. Los repos `timesmedia-web` y `timesmedia-node` permanecen privados: el instalador intenta primero una clave SSH/deploy key ya configurada y, si no existe, solicita un Fine-grained GitHub token con **Contents: Read-only**. El token se guarda únicamente en un directorio temporal privado `0700`, dentro de un archivo `0600`; se usa a través de `GIT_ASKPASS` y se elimina al terminar. No se inserta en la URL de Git ni en la línea de comandos.
 
 ## Layout
 
