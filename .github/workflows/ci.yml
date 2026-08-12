@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+      - name: Parse scripts
+        run: |
+          bash -n install-timesmedia.sh
+          bash -n timesmedia
+          bash -n lib/common.sh
+      - name: ShellCheck errors
+        run: shellcheck -S error install-timesmedia.sh timesmedia lib/common.sh
+      - name: Secret guard
+        run: |
+          ! git grep -nE 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY'
