@@ -84,10 +84,24 @@ clone_private_repo(){
 }
 
 TM_STAGE=""
+cleanup_stale_stages(){
+  local parent="$1" base="$2" current="${3:-}" candidate pid
+  [[ -d "$parent" ]] || return 0
+  while IFS= read -r -d '' candidate; do
+    [[ -n "$current" && "$candidate" == "$current" ]] && continue
+    pid=${candidate##*.stage.}
+    if [[ ! "$pid" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then
+      rm -rf -- "$candidate"
+    fi
+  done < <(find "$parent" -mindepth 1 -maxdepth 1 -type d -name ".${base}.stage.*" -print0)
+}
+
 atomic_code_install(){
-  local repo="$1" target="$2" parent bundled_root bundled
+  local repo="$1" target="$2" parent base bundled_root bundled
   parent=$(dirname "$target")
-  TM_STAGE="${parent}/.$(basename "$target").stage.$$"
+  base=$(basename "$target")
+  TM_STAGE="${parent}/.${base}.stage.$$"
+  cleanup_stale_stages "$parent" "$base" "$TM_STAGE"
   bundled_root="${TM_PAYLOAD_ROOT:-${SCRIPT_DIR:-}/payload}"
   bundled="${bundled_root%/}/$repo"
   rm -rf -- "$TM_STAGE"

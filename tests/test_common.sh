@@ -37,6 +37,12 @@ if (_tm_prepare_token_auth </dev/null) >"$TEST_TMP/auth.out" 2>"$TEST_TMP/auth.e
 fi
 grep -q 'No hay una terminal interactiva' "$TEST_TMP/auth.err" || fail "Falta error claro sin terminal"
 
+# An interrupted previous run must not leave a full orphaned venv forever.
+mkdir -p "$TEST_TMP/stages/.timesmedia-node.stage.999999999" "$TEST_TMP/stages/.timesmedia-node.stage.$$"
+cleanup_stale_stages "$TEST_TMP/stages" timesmedia-node "$TEST_TMP/stages/.timesmedia-node.stage.$$"
+assert_missing "$TEST_TMP/stages/.timesmedia-node.stage.999999999"
+[[ -d "$TEST_TMP/stages/.timesmedia-node.stage.$$" ]] || fail "La limpieza eliminó el staging activo"
+
 # Keep the curl-pipe terminal handoff covered by CI.
 grep -Fq 'exec ./install-timesmedia.sh "$@" </dev/tty' "$ROOT/bootstrap.sh" || fail "bootstrap no reconecta /dev/tty"
 
