@@ -35,7 +35,13 @@ health_cmd(){
   local failures=0 token
   printf '\nTimesMedia Health Check\n=======================\n'
   if service_exists timesmedia-web.service; then
-    if curl -fsS --max-time 4 http://127.0.0.1:5000/health >/dev/null 2>&1; then ok "WEB responde"; else warn "WEB no responde"; failures=$((failures+1)); fi
+    if curl -fsS --max-time 4 http://127.0.0.1:5000/health >/dev/null 2>&1 \
+      && curl -fsS --max-time 4 http://127.0.0.1:5000/ >/dev/null 2>&1; then
+      ok "WEB API y portada responden"
+    else
+      warn "WEB API o portada no responde"
+      failures=$((failures+1))
+    fi
   fi
   if service_exists timesmedia-node.service && [[ -r "$NODE_ENV" ]]; then
     token=$(sed -n 's/^NODE_TOKEN=//p' "$NODE_ENV" | tail -n1)
