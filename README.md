@@ -1,4 +1,4 @@
-# TimesMedia Installer 8.1.5
+# TimesMedia Installer 8.1.6
 
 Instalador y CLI de mantenimiento para los repositorios privados de TimesMedia.
 
@@ -43,6 +43,8 @@ curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/mai
 El modo `node --fresh` obtiene y valida primero el repositorio privado; después detiene y elimina exclusivamente los servicios, código, estado, configuración y multimedia del NODE anterior. No modifica TimesMedia WEB ni otros proyectos del servidor.
 
 Los venv de WEB y NODE, y todas sus comprobaciones, se ejecutan desde sus rutas finales bajo `/opt`; no dependen del directorio temporal privado usado por `bootstrap.sh`.
+
+La comprobación de salud del WEB valida tanto `/health` como la portada `/`; una plantilla rota ya no puede declararse saludable.
 
 También puede ejecutarse desde un checkout o ZIP:
 
