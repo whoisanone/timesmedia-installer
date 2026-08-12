@@ -125,6 +125,15 @@ python_venv_build(){
   "$code/.venv/bin/python" -m compileall -q "$code"
 }
 
+python_venv_build_as(){
+  local user="$1" code="$2"
+  rm -rf -- "$code/.venv"
+  runuser -u "$user" -- python3 -m venv "$code/.venv"
+  runuser -u "$user" -- "$code/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
+  runuser -u "$user" -- "$code/.venv/bin/python" -m pip install --requirement "$code/requirements.txt"
+  runuser -u "$user" -- "$code/.venv/bin/python" -m compileall -q "$code"
+}
+
 swap_code(){
   local stage="$1" target="$2" backup
   backup="${target}.previous"
