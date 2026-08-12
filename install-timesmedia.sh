@@ -4,6 +4,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 need_root
+INSTALLER_VERSION=$(<"$SCRIPT_DIR/VERSION")
 
 WEB_CODE=/opt/timesmedia-web
 WEB_STATE=/var/lib/timesmedia-web
@@ -114,7 +115,7 @@ install_web(){
   local mode="${1:-}"
   [[ -z "$mode" || "$mode" == "--fresh" ]] || die "Uso: $0 web [--fresh]"
   [[ "$mode" != "--fresh" ]] || TM_FRESH_WEB=1
-  log "Preparando TimesMedia WEB 8.1.4..."
+  log "Preparando TimesMedia WEB ${INSTALLER_VERSION}..."
   apt_install ca-certificates curl git python3 python3-venv
   install -d -m 755 /opt /etc/timesmedia
 
@@ -217,12 +218,12 @@ install_web(){
     [[ "$TM_FRESH_WEB" == 1 ]] || { service_exists mediavps.service && systemctl start mediavps.service 2>/dev/null || true; }
     die "TimesMedia WEB no inició; código revertido y MediaVPS intentó restaurarse."
   fi
-  if ! wait_http http://127.0.0.1:5000/health 30; then
+  if ! wait_http http://127.0.0.1:5000/health 30 || ! wait_http http://127.0.0.1:5000/ 5; then
     journalctl -u timesmedia-web.service -n 40 --no-pager >&2 || true
     systemctl stop timesmedia-web.service timesmedia-scheduler.service || true
     rollback_code "$WEB_CODE"
     [[ "$TM_FRESH_WEB" == 1 ]] || { service_exists mediavps.service && systemctl start mediavps.service 2>/dev/null || true; }
-    die "Health check WEB falló; se ejecutó rollback."
+    die "Health check WEB falló en la API o portada; se ejecutó rollback."
   fi
   install_cli
   ok "TimesMedia WEB instalado y saludable."
@@ -321,7 +322,7 @@ install_node(){
   local mode="${1:-}"
   [[ -z "$mode" || "$mode" == "--fresh" ]] || die "Uso: $0 node [--fresh]"
   [[ "$mode" != "--fresh" ]] || TM_FRESH_NODE=1
-  log "Preparando TimesMedia NODE 8.1.3..."
+  log "Preparando TimesMedia NODE ${INSTALLER_VERSION}..."
   apt_install aria2 ca-certificates curl ffmpeg git openssl python3 python3-venv
   install -d -m 755 /opt /etc/timesmedia /srv/timesmedia
 
