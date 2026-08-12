@@ -1,4 +1,4 @@
-# TimesMedia Installer 8.1.3
+# TimesMedia Installer 8.1.4
 
 Instalador y CLI de mantenimiento para los repositorios privados de TimesMedia.
 
@@ -18,6 +18,22 @@ curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/mai
 
 La limpieza elimina solamente servicios, procesos, código, configuración, estado, multimedia, usuario y reglas de firewall del NODE. Conserva MediaVPS/TimesMedia WEB y otros proyectos.
 
+Limpieza independiente de MediaVPS WEB y TimesMedia WEB:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/main/purge-web.sh | sudo bash -s -- --yes
+```
+
+Esta limpieza conserva `cloudflared`, SSH, el NODE y los demás proyectos. También se niega a declarar éxito si algún proceso antiguo continúa escuchando en el puerto 5000.
+
+Instalación completamente limpia del panel WEB, sin migrar DB, portadas, configuración ni secretos de MediaVPS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/main/bootstrap.sh | sudo bash -s -- web --fresh
+```
+
+El instalador valida primero que el repositorio WEB privado esté completo; después borra exclusivamente el WEB anterior y crea una base de datos, secreto y administrador nuevos.
+
 Reinstalación completamente limpia del NODE, sin migrar MediaVPS ni conservar su multimedia:
 
 ```bash
@@ -26,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/mai
 
 El modo `node --fresh` obtiene y valida primero el repositorio privado; después detiene y elimina exclusivamente los servicios, código, estado, configuración y multimedia del NODE anterior. No modifica TimesMedia WEB ni otros proyectos del servidor.
 
-El venv y todas sus comprobaciones se ejecutan desde `/opt/timesmedia-node`; no dependen del directorio temporal privado usado por `bootstrap.sh`.
+Los venv de WEB y NODE, y todas sus comprobaciones, se ejecutan desde sus rutas finales bajo `/opt`; no dependen del directorio temporal privado usado por `bootstrap.sh`.
 
 También puede ejecutarse desde un checkout o ZIP:
 
