@@ -36,9 +36,19 @@ _tm_cleanup_auth(){
   TM_TOKEN_FILE=""; TM_ASKPASS=""
 }
 
+_tm_cleanup(){
+  _tm_cleanup_auth
+  if [[ -n "${TM_STAGE:-}" && -d "${TM_STAGE:-}" ]]; then
+    rm -rf -- "$TM_STAGE" || true
+  fi
+}
+
 _tm_prepare_token_auth(){
   local token
-  read -r -s -p "GitHub token (Fine-grained, Contents: Read-only): " token
+  if ! read -r -s -p "GitHub token (Fine-grained, Contents: Read-only): " token; then
+    printf '\n'
+    die "No hay una terminal interactiva para leer el token de GitHub."
+  fi
   printf '\n'
   [[ ${#token} -ge 20 ]] || die "Token demasiado corto o vacío."
   TM_TOKEN_FILE=$(mktemp /run/timesmedia-gh-token.XXXXXX)
@@ -102,17 +112,18 @@ python_venv_build(){
 }
 
 swap_code(){
-  local stage="$1" target="$2" backup="${target}.previous"
+  local stage="$1" target="$2" backup
+  backup="${target}.previous"
   rm -rf -- "$backup"
   [[ -d "$target" ]] && mv "$target" "$backup"
   mv "$stage" "$target"
 }
 
 rollback_code(){
-  local target="$1" backup="${target}.previous"
-  [[ -d "$backup" ]] || return 0
+  local target="$1" backup
+  backup="${target}.previous"
   rm -rf -- "$target"
-  mv "$backup" "$target"
+  [[ ! -d "$backup" ]] || mv "$backup" "$target"
 }
 
 write_kv(){

@@ -4,7 +4,6 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=lib/common.sh
 source "$SCRIPT_DIR/lib/common.sh"
 need_root
-trap '_tm_cleanup_auth' EXIT
 
 WEB_CODE=/opt/timesmedia-web
 WEB_STATE=/var/lib/timesmedia-web
@@ -13,6 +12,22 @@ NODE_CODE=/opt/timesmedia-node
 NODE_STATE=/var/lib/timesmedia-node
 NODE_MEDIA=/srv/timesmedia/media
 NODE_ENV=/etc/timesmedia/node.env
+TM_NODE_CUTOVER_ACTIVE=0
+TM_NODE_STATE_BACKUP=""
+TM_MEDIA_MOVED=0
+
+installer_cleanup(){
+  local rc="$1"
+  trap - EXIT
+  if [[ "$TM_NODE_CUTOVER_ACTIVE" == 1 ]]; then
+    systemctl stop timesmedia-node.service timesmedia-worker.service 2>/dev/null || true
+    rollback_code "$NODE_CODE" || true
+    rollback_node_legacy || true
+  fi
+  _tm_cleanup
+  exit "$rc"
+}
+trap 'installer_cleanup "$?"' EXIT
 
 read_secret_twice(){
   local label="$1" a b
@@ -158,26 +173,41 @@ legacy_node_migrate(){
   TM_LEGACY_NODE_CODE="$old_code"; TM_LEGACY_MEDIA="$old_media"; TM_LEGACY_MIGRATE=1
 }
 
+preflight_node_cutover_migration(){
+  [[ "${TM_LEGACY_MIGRATE:-0}" == 1 ]] || return 0
+  local old_media="${TM_LEGACY_MEDIA:-}" srcdev dstdev
+  [[ -n "$old_media" && -d "$old_media" && "$old_media" != "$NODE_MEDIA" ]] || return 0
+  if [[ -d "$NODE_MEDIA" ]] && find "$NODE_MEDIA" -mindepth 1 -print -quit | grep -q .; then
+    die "El destino $NODE_MEDIA no está vacío; no moveré el storage legado."
+  fi
+  srcdev=$(stat -c %d "$old_media")
+  dstdev=$(stat -c %d "$(dirname "$NODE_MEDIA")")
+  [[ "$srcdev" == "$dstdev" ]] || die "El storage legado está en otro filesystem. Migra los datos manualmente antes del corte."
+}
+
 perform_node_cutover_migration(){
   [[ "${TM_LEGACY_MIGRATE:-0}" == 1 ]] || return 0
   local old_code="${TM_LEGACY_NODE_CODE:-}" old_media="${TM_LEGACY_MEDIA:-}"
+  TM_NODE_CUTOVER_ACTIVE=1
   systemctl stop mediavps-worker.service mediavps-node.service 2>/dev/null || true
   if [[ -n "$old_code" && -d "$old_code/data" && ! -e "$NODE_STATE/node.sqlite3" ]]; then
-    cp -a "$old_code/data/." "$NODE_STATE/"
+    local state_backup="${NODE_STATE}.pre-migration.$$"
+    rm -rf -- "$state_backup" || return 1
+    mv "$NODE_STATE" "$state_backup" || return 1
+    TM_NODE_STATE_BACKUP="$state_backup"
+    secure_mkdir timesmedia-node 700 "$NODE_STATE" || return 1
+    local d
+    for d in cache posters fallback hls torrents aria2; do
+      secure_mkdir timesmedia-node 700 "$NODE_STATE/$d" || return 1
+    done
+    cp -a "$old_code/data/." "$NODE_STATE/" || return 1
   fi
-  chown -R timesmedia-node:timesmedia-node "$NODE_STATE"
+  chown -R timesmedia-node:timesmedia-node "$NODE_STATE" || return 1
   if [[ -n "$old_media" && -d "$old_media" && "$old_media" != "$NODE_MEDIA" ]]; then
-    if [[ -d "$NODE_MEDIA" ]] && find "$NODE_MEDIA" -mindepth 1 -print -quit | grep -q .; then
-      die "El destino $NODE_MEDIA no está vacío; no moveré el storage legado."
-    fi
     rmdir "$NODE_MEDIA" 2>/dev/null || true
-    local srcdev dstdev
-    srcdev=$(stat -c %d "$old_media")
-    dstdev=$(stat -c %d "$(dirname "$NODE_MEDIA")")
-    [[ "$srcdev" == "$dstdev" ]] || die "El storage legado está en otro filesystem. Migra los datos manualmente antes del corte."
-    mv "$old_media" "$NODE_MEDIA"
-    chown -R timesmedia-node:timesmedia-node "$NODE_MEDIA"
+    mv "$old_media" "$NODE_MEDIA" || return 1
     TM_MEDIA_MOVED=1
+    chown -R timesmedia-node:timesmedia-node "$NODE_MEDIA" || return 1
   fi
 }
 
@@ -185,7 +215,19 @@ rollback_node_legacy(){
   if [[ "${TM_MEDIA_MOVED:-0}" == 1 && -n "${TM_LEGACY_MEDIA:-}" && -d "$NODE_MEDIA" ]]; then
     mv "$NODE_MEDIA" "$TM_LEGACY_MEDIA" || true
   fi
+  if [[ -n "${TM_NODE_STATE_BACKUP:-}" && -d "$TM_NODE_STATE_BACKUP" ]]; then
+    rm -rf -- "$NODE_STATE" || true
+    mv "$TM_NODE_STATE_BACKUP" "$NODE_STATE" || true
+  fi
+  TM_MEDIA_MOVED=0; TM_NODE_STATE_BACKUP=""; TM_NODE_CUTOVER_ACTIVE=0
   systemctl start mediavps-node.service mediavps-worker.service 2>/dev/null || true
+}
+
+commit_node_legacy(){
+  if [[ -n "${TM_NODE_STATE_BACKUP:-}" && -d "$TM_NODE_STATE_BACKUP" ]]; then
+    rm -rf -- "$TM_NODE_STATE_BACKUP"
+  fi
+  TM_MEDIA_MOVED=0; TM_NODE_STATE_BACKUP=""; TM_NODE_CUTOVER_ACTIVE=0
 }
 
 install_node(){
@@ -223,6 +265,7 @@ install_node(){
   fi
 
   legacy_node_migrate
+  preflight_node_cutover_migration
   if service_active mediavps-node.service && [[ "${TM_LEGACY_MIGRATE:-0}" != 1 ]]; then
     warn "MediaVPS NODE sigue activo en 5100 y la migración fue omitida."
     warn "No tocaré el servicio ni el storage activo. Ejecuta el instalador otra vez cuando quieras hacer el corte."
@@ -237,7 +280,12 @@ install_node(){
   install -m 644 "$NODE_CODE/deploy/systemd/timesmedia-worker.service" /etc/systemd/system/timesmedia-worker.service
   systemctl daemon-reload
 
-  perform_node_cutover_migration
+  if ! perform_node_cutover_migration; then
+    systemctl stop timesmedia-node.service timesmedia-worker.service 2>/dev/null || true
+    rollback_code "$NODE_CODE"
+    rollback_node_legacy
+    die "La migración del NODE falló; se restauró MediaVPS."
+  fi
   local web_ip
   web_ip=$(sed -n 's/^TIMESMEDIA_WEB_IP=//p' "$NODE_ENV" | tail -n1)
   install -d -m 755 /etc/systemd/system/timesmedia-node.service.d
@@ -266,6 +314,7 @@ EOFNET
   fi
 
   if ! systemctl enable --now timesmedia-node.service timesmedia-worker.service; then
+    systemctl stop timesmedia-node.service timesmedia-worker.service 2>/dev/null || true
     rollback_code "$NODE_CODE"; rollback_node_legacy
     die "NODE no inició; se intentó rollback al MediaVPS anterior."
   fi
@@ -283,6 +332,7 @@ EOFNET
     rollback_code "$NODE_CODE"; rollback_node_legacy
     die "Health check NODE falló; se ejecutó rollback."
   fi
+  commit_node_legacy
   systemctl disable mediavps-node.service mediavps-worker.service >/dev/null 2>&1 || true
   install_cli
   ok "TimesMedia NODE instalado y saludable."

@@ -4,7 +4,13 @@ Instalador y CLI de mantenimiento para los repositorios privados de TimesMedia.
 
 ## Uso
 
-Desde este repositorio o desde el ZIP de instalación:
+Instalación directa del NODE con un único comando:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whoisanone/timesmedia-installer/main/bootstrap.sh | sudo bash -s -- node
+```
+
+También puede ejecutarse desde un checkout o ZIP:
 
 ```bash
 sudo ./install-timesmedia.sh
@@ -37,4 +43,4 @@ timesmedia uninstall [--purge-data]
 
 El instalador no ejecuta `ufw reset` ni habilita un firewall inactivo a ciegas. En NODE elimina la regla global común de 5100, añade la regla limitada a la IP WEB y conserva el puerto BitTorrent TCP/UDP. Además instala una política de red de systemd para que la API acepte tráfico solamente desde loopback y la IP del controlador incluso si UFW queda inactivo.
 
-`bootstrap.sh` permite arrancar desde una copia local mínima: usa primero una deploy key SSH y, si no existe, solicita el token por entrada oculta. Como `timesmedia-installer` es privado, un `curl` anónimo desde GitHub no puede ser el primer paso sin publicar un bootstrap separado; el repositorio no debilita esa privacidad para conseguir una URL bonita.
+`bootstrap.sh` reconecta la terminal incluso al ejecutarse mediante `curl | bash`. Usa primero una deploy key SSH y, si no existe, solicita el token por entrada oculta sin guardarlo permanentemente.
