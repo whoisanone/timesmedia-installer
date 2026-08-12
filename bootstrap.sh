@@ -24,4 +24,10 @@ git -c credential.helper= clone --quiet --depth 1 --branch "$BRANCH" "$HTTPS_URL
 
 cd "$TMP/repo"
 chmod +x ./install-timesmedia.sh
+
+# `curl | bash` consumes stdin with the bootstrap itself. Reconnect the real
+# terminal before the interactive installer asks for tokens, IPs or passwords.
+if [[ -c /dev/tty ]] && { : </dev/tty; } 2>/dev/null; then
+  exec ./install-timesmedia.sh "$@" </dev/tty
+fi
 exec ./install-timesmedia.sh "$@"

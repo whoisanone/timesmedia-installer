@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=../lib/common.sh
+source "$ROOT/lib/common.sh"
+
+TEST_TMP=$(mktemp -d /tmp/timesmedia-common-test.XXXXXX)
+trap 'rm -rf -- "$TEST_TMP"' EXIT
+
+fail(){ printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+assert_file(){ [[ -f "$1" ]] || fail "Falta $1"; }
+assert_missing(){ [[ ! -e "$1" ]] || fail "No debía existir $1"; }
+
+# Updating an existing install must preserve the previous checkout and rollback it.
+mkdir -p "$TEST_TMP/stage" "$TEST_TMP/target"
+printf 'new\n' > "$TEST_TMP/stage/version"
+printf 'old\n' > "$TEST_TMP/target/version"
+swap_code "$TEST_TMP/stage" "$TEST_TMP/target"
+[[ "$(cat "$TEST_TMP/target/version")" == new ]] || fail "swap no activó staging"
+[[ "$(cat "$TEST_TMP/target.previous/version")" == old ]] || fail "swap no conservó versión anterior"
+rollback_code "$TEST_TMP/target"
+[[ "$(cat "$TEST_TMP/target/version")" == old ]] || fail "rollback no restauró versión anterior"
+assert_missing "$TEST_TMP/target.previous"
+
+# A failed first install has no previous checkout and must remove the failed target.
+mkdir -p "$TEST_TMP/fresh-stage"
+printf 'new\n' > "$TEST_TMP/fresh-stage/version"
+swap_code "$TEST_TMP/fresh-stage" "$TEST_TMP/fresh-target"
+assert_file "$TEST_TMP/fresh-target/version"
+rollback_code "$TEST_TMP/fresh-target"
+assert_missing "$TEST_TMP/fresh-target"
+
+# A piped/non-interactive install must fail with an explicit message, not silently.
+if (_tm_prepare_token_auth </dev/null) >"$TEST_TMP/auth.out" 2>"$TEST_TMP/auth.err"; then
+  fail "El prompt de token aceptó stdin cerrado"
+fi
+grep -q 'No hay una terminal interactiva' "$TEST_TMP/auth.err" || fail "Falta error claro sin terminal"
+
+# Keep the curl-pipe terminal handoff covered by CI.
+grep -Fq 'exec ./install-timesmedia.sh "$@" </dev/tty' "$ROOT/bootstrap.sh" || fail "bootstrap no reconecta /dev/tty"
+
+printf 'OK: common runtime regressions\n'
