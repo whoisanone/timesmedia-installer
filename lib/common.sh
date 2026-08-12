@@ -128,10 +128,22 @@ python_venv_build(){
 python_venv_build_as(){
   local user="$1" code="$2"
   rm -rf -- "$code/.venv"
-  runuser -u "$user" -- python3 -m venv "$code/.venv"
-  runuser -u "$user" -- "$code/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-  runuser -u "$user" -- "$code/.venv/bin/python" -m pip install --requirement "$code/requirements.txt"
-  runuser -u "$user" -- "$code/.venv/bin/python" -m compileall -q "$code"
+  (
+    cd "$code"
+    runuser -u "$user" -- python3 -m venv .venv
+    runuser -u "$user" -- .venv/bin/python -m pip install --upgrade pip setuptools wheel
+    runuser -u "$user" -- .venv/bin/python -m pip install --requirement requirements.txt
+    runuser -u "$user" -- .venv/bin/python -m compileall -q .
+  )
+}
+
+python_module_check_as(){
+  local user="$1" code="$2" module="$3"
+  shift 3
+  (
+    cd "$code"
+    runuser -u "$user" -- "$code/.venv/bin/python" -m "$module" "$@"
+  )
 }
 
 swap_code(){
