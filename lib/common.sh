@@ -75,11 +75,22 @@ clone_private_repo(){
 
 TM_STAGE=""
 atomic_code_install(){
-  local repo="$1" target="$2" parent
+  local repo="$1" target="$2" parent bundled_root bundled
   parent=$(dirname "$target")
   TM_STAGE="${parent}/.$(basename "$target").stage.$$"
-  clone_private_repo "$repo" "$TM_STAGE"
-  rm -rf -- "$TM_STAGE/.git"
+  bundled_root="${TM_PAYLOAD_ROOT:-${SCRIPT_DIR:-}/payload}"
+  bundled="${bundled_root%/}/$repo"
+  rm -rf -- "$TM_STAGE"
+  if [[ -n "$bundled_root" && -d "$bundled" ]]; then
+    log "Usando payload verificado incluido para ${repo}."
+    install -d -m 755 "$TM_STAGE"
+    cp -a "$bundled/." "$TM_STAGE/"
+  else
+    clone_private_repo "$repo" "$TM_STAGE"
+  fi
+  rm -rf -- "$TM_STAGE/.git" "$TM_STAGE/__pycache__"
+  find "$TM_STAGE" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+  find "$TM_STAGE" -type f -name '*.pyc' -delete 2>/dev/null || true
 }
 
 python_venv_build(){
