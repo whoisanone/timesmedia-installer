@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+SELF_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+if [[ -f /usr/local/lib/timesmedia/common.sh ]]; then
+  # shellcheck source=/dev/null
+  source /usr/local/lib/timesmedia/common.sh
+elif [[ -f "$SELF_DIR/lib/common.sh" ]]; then
+  # shellcheck source=lib/common.sh
+  source "$SELF_DIR/lib/common.sh"
+else
+  printf 'No se encontró common.sh de TimesMedia.\n' >&2; exit 1
+fi
+need_root
+
+WEB_CODE=/opt/timesmedia-web; WEB_STATE=/var/lib/timesmedia-web; WEB_ENV=/etc/timesmedia/web.env
+NODE_CODE=/opt/timesmedia-node; NODE_STATE=/var/lib/timesmedia-node; NODE_MEDIA=/srv/timesmedia/media; NODE_ENV=/etc/timesmedia/node.env
+
+status_cmd(){
+  printf '\nTimesMedia status\n=================\n'
+  local svc
+  for svc in timesmedia-web.service timesmedia-scheduler.service timesmedia-node.service timesmedia-worker.service; do
+    if service_exists "$svc"; then
+      printf '%-34s %s\n' "$svc" "$(systemctl is-active "$svc" 2>/dev/null || true)"
+    fi
+  done
+  if [[ -f "$WEB_CODE/VERSION" ]]; then printf '%-34s %s\n' 'WEB version' "$(cat "$WEB_CODE/VERSION")"; fi
+  if [[ -f "$NODE_CODE/VERSION" ]]; then printf '%-34s %s\n' 'NODE version' "$(cat "$NODE_CODE/VERSION")"; fi
+  if have ss; then
+    printf '\nListeners TimesMedia:\n'
+    ss -lntup 2>/dev/null | grep -E ':(5000|5100|6883)\b' || true
+  fi
+}
+
+health_cmd(){
+  local failures=0 token
+  printf '\nTimesMedia Health Check\n=======================\n'
+  if service_exists timesmedia-web.service; then
+    if curl -fsS --max-time 4 http://127.0.0.1:5000/health >/dev/null 2>&1; then ok "WEB responde"; else warn "WEB no responde"; failures=$((failures+1)); fi
+  fi
+  if service_exists timesmedia-node.service && [[ -r "$NODE_ENV" ]]; then
+    token=$(sed -n 's/^NODE_TOKEN=//p' "$NODE_ENV" | tail -n1)
+    if curl -fsS --max-time 4 -H "Authorization: Bearer $token" http://127.0.0.1:5100/v1/health >/dev/null 2>&1; then ok "NODE API responde"; else warn "NODE API no responde"; failures=$((failures+1)); fi
+    unset token
+  fi
+  service_exists timesmedia-scheduler.service && { service_active timesmedia-scheduler.service && ok "Scheduler activo" || { warn "Scheduler inactivo"; failures=$((failures+1)); }; }
+  service_exists timesmedia-worker.service && { service_active timesmedia-worker.service && ok "Worker activo" || { warn "Worker inactivo"; failures=$((failures+1)); }; }
+  (( failures == 0 ))
+}
+
+logs_cmd(){
+  case "${1:-all}" in
+    web) journalctl -u timesmedia-web.service -n 200 --no-pager;;
+    scheduler) journalctl -u timesmedia-scheduler.service -n 200 --no-pager;;
+    node) journalctl -u timesmedia-node.service -n 200 --no-pager;;
+    worker) journalctl -u timesmedia-worker.service -n 200 --no-pager;;
+    all) journalctl -u timesmedia-web.service -u timesmedia-scheduler.service -u timesmedia-node.service -u timesmedia-worker.service -n 300 --no-pager;;
+    *) die "Uso: timesmedia logs [web|scheduler|node|worker|all]";;
+  esac
+}
+
+check(){ local state="$1" msg="$2"; if [[ "$state" == 1 ]]; then ok "$msg"; else warn "$msg"; SECURITY_WARNINGS=$((SECURITY_WARNINGS+1)); fi; }
+
+security_check(){
+  SECURITY_WARNINGS=0
+  printf '\nTimesMedia Security Check\n=========================\n'
+  if [[ -f "$WEB_ENV" ]]; then
+    local mode; mode=$(stat -c '%a' "$WEB_ENV" 2>/dev/null || echo 000); check "$([[ "$mode" == 600 ]] && echo 1 || echo 0)" "WEB env mode 600 (actual: $mode)"
+  fi
+  if [[ -f "$NODE_ENV" ]]; then
+    local mode; mode=$(stat -c '%a' "$NODE_ENV" 2>/dev/null || echo 000); check "$([[ "$mode" == 600 ]] && echo 1 || echo 0)" "NODE env mode 600 (actual: $mode)"
+    local token; token=$(sed -n 's/^NODE_TOKEN=//p' "$NODE_ENV" | tail -n1); check "$([[ ${#token} -ge 32 ]] && echo 1 || echo 0)" "NODE token >=32 caracteres"; unset token
+  fi
+  if service_exists timesmedia-web.service; then
+    check "$([[ "$(systemctl show -p User --value timesmedia-web.service)" == timesmedia-web ]] && echo 1 || echo 0)" "WEB no ejecuta como root"
+    if have ss; then
+      check "$(! ss -lntH 2>/dev/null | awk '{print $4}' | grep -Eq '(^|\]|:)0\.0\.0\.0:5000$|\*:5000$|\[::\]:5000$' && echo 1 || echo 0)" "WEB 5000 no está expuesto globalmente"
+    fi
+  fi
+  if service_exists timesmedia-node.service; then
+    check "$([[ "$(systemctl show -p User --value timesmedia-node.service)" == timesmedia-node ]] && echo 1 || echo 0)" "NODE API no ejecuta como root"
+  fi
+  if service_exists timesmedia-worker.service; then
+    check "$([[ "$(systemctl show -p User --value timesmedia-worker.service)" == timesmedia-node ]] && echo 1 || echo 0)" "NODE worker no ejecuta como root"
+  fi
+  [[ ! -e "$WEB_CODE/.env" ]] && ok "WEB checkout sin .env" || { warn "Hay .env dentro del checkout WEB"; SECURITY_WARNINGS=$((SECURITY_WARNINGS+1)); }
+  [[ ! -e "$NODE_CODE/.env" ]] && ok "NODE checkout sin .env" || { warn "Hay .env dentro del checkout NODE"; SECURITY_WARNINGS=$((SECURITY_WARNINGS+1)); }
+  [[ ! -e "$WEB_CODE/data" ]] && ok "WEB data fuera del checkout" || warn "WEB tiene data dentro del checkout (revisar)"
+  [[ ! -e "$NODE_CODE/data" ]] && ok "NODE data fuera del checkout" || warn "NODE tiene data dentro del checkout (revisar)"
+  if have ufw && ufw status | head -1 | grep -qi active; then
+    ok "UFW activo"
+    if ufw status | grep -E '5100(/tcp)?\s+ALLOW\s+Anywhere|5100(/tcp)?\s+ALLOW\s+Anywhere \(v6\)' >/dev/null; then
+      warn "Puerto 5100 tiene una regla global ALLOW; debe limitarse al WEB."
+      SECURITY_WARNINGS=$((SECURITY_WARNINGS+1))
+    else
+      ok "Sin ALLOW global detectado para 5100"
+    fi
+  else
+    warn "UFW no está activo; verifica el firewall del proveedor/host."
+    SECURITY_WARNINGS=$((SECURITY_WARNINGS+1))
+  fi
+  if [[ -f "$WEB_ENV" ]] && grep -q '^PUBLIC_IMPORTS=0$' "$WEB_ENV"; then ok "Imports públicos desactivados"; else warn "PUBLIC_IMPORTS no está en 0"; SECURITY_WARNINGS=$((SECURITY_WARNINGS+1)); fi
+  if [[ -f "$WEB_CODE/deploy/systemd/timesmedia-web.service" ]]; then
+    grep -q '^NoNewPrivileges=true$' "$WEB_CODE/deploy/systemd/timesmedia-web.service" && ok "WEB systemd NoNewPrivileges" || { warn "WEB sin NoNewPrivileges"; SECURITY_WARNINGS=$((SECURITY_WARNINGS+1)); }
+  fi
+  if [[ -f "$NODE_CODE/deploy/systemd/timesmedia-node.service" ]]; then
+    grep -q '^NoNewPrivileges=true$' "$NODE_CODE/deploy/systemd/timesmedia-node.service" && ok "NODE systemd NoNewPrivileges" || { warn "NODE sin NoNewPrivileges"; SECURITY_WARNINGS=$((SECURITY_WARNINGS+1)); }
+  fi
+  printf '\nResultado: %s advertencia(s).\n' "$SECURITY_WARNINGS"
+  return $(( SECURITY_WARNINGS > 0 ? 1 : 0 ))
+}
+
+backup_cmd(){
+  local with_media=0; [[ "${1:-}" == "--with-media" ]] && with_media=1
+  install -d -m 700 "$TM_BACKUP_DIR"
+  local stamp archive list=()
+  stamp=$(backup_stamp); archive="$TM_BACKUP_DIR/timesmedia-$stamp.tar.gz"
+  [[ -d "$WEB_STATE" ]] && list+=("var/lib/timesmedia-web")
+  [[ -f "$WEB_ENV" ]] && list+=("etc/timesmedia/web.env")
+  [[ -d "$NODE_STATE" ]] && list+=("var/lib/timesmedia-node")
+  [[ -f "$NODE_ENV" ]] && list+=("etc/timesmedia/node.env")
+  (( with_media )) && [[ -d "$NODE_MEDIA" ]] && list+=("srv/timesmedia/media")
+  ((${#list[@]})) || die "No encontré estado TimesMedia que respaldar."
+  local excludes=(--exclude='var/lib/timesmedia-node/hls/*' --exclude='var/lib/timesmedia-node/fallback/*' --exclude='var/lib/timesmedia-web/cache/*' --exclude='var/lib/timesmedia-node/cache/*')
+  tar -C / -czf "$archive" "${excludes[@]}" "${list[@]}"
+  chmod 600 "$archive"
+  sha256sum "$archive" > "$archive.sha256"; chmod 600 "$archive.sha256"
+  ok "Backup: $archive"
+}
+
+restore_cmd(){
+  local archive="${1:-}"; [[ -f "$archive" ]] || die "Indica un .tar.gz existente."
+  confirm "Restore detendrá TimesMedia y sobrescribirá estado/configuración. ¿Continuar?" || exit 0
+  systemctl stop timesmedia-web.service timesmedia-scheduler.service timesmedia-node.service timesmedia-worker.service 2>/dev/null || true
+  tar -tzf "$archive" | grep -Eq '^(var/lib/timesmedia-|etc/timesmedia/|srv/timesmedia/media/)' || die "El backup no parece de TimesMedia."
+  tar -C / -xzf "$archive"
+  [[ -d "$WEB_STATE" ]] && chown -R timesmedia-web:timesmedia-web "$WEB_STATE" 2>/dev/null || true
+  [[ -d "$NODE_STATE" ]] && chown -R timesmedia-node:timesmedia-node "$NODE_STATE" 2>/dev/null || true
+  [[ -d "$NODE_MEDIA" ]] && chown -R timesmedia-node:timesmedia-node "$NODE_MEDIA" 2>/dev/null || true
+  systemctl start timesmedia-web.service timesmedia-scheduler.service timesmedia-node.service timesmedia-worker.service 2>/dev/null || true
+  ok "Restore aplicado. Ejecuta: timesmedia status"
+}
+
+update_cmd(){
+  local target="${1:-all}" installer=/usr/local/lib/timesmedia/install-timesmedia.sh
+  [[ -x "$installer" ]] || die "No está instalado el instalador TimesMedia."
+  backup_cmd
+  case "$target" in web) "$installer" web;; node) "$installer" node;; all) "$installer" web; "$installer" node;; *) die "Uso: timesmedia update [web|node|all]";; esac
+}
+
+repair_cmd(){
+  local target="${1:-all}" installer=/usr/local/lib/timesmedia/install-timesmedia.sh
+  [[ -x "$installer" ]] || die "No está instalado el instalador TimesMedia."
+  case "$target" in web) "$installer" web;; node) "$installer" node;; all) "$installer" web; "$installer" node;; *) die "Uso: timesmedia repair [web|node|all]";; esac
+}
+
+node_token_cmd(){
+  [[ -r "$NODE_ENV" ]] || die "No se encontró $NODE_ENV"
+  sed -n 's/^NODE_TOKEN=//p' "$NODE_ENV" | tail -n1
+}
+
+uninstall_cmd(){
+  local purge=0; [[ "${1:-}" == "--purge-data" ]] && purge=1
+  confirm "¿Desinstalar servicios/código TimesMedia? Los datos se conservan por defecto." || exit 0
+  systemctl disable --now timesmedia-web.service timesmedia-scheduler.service timesmedia-node.service timesmedia-worker.service 2>/dev/null || true
+  rm -f /etc/systemd/system/timesmedia-web.service /etc/systemd/system/timesmedia-scheduler.service /etc/systemd/system/timesmedia-node.service /etc/systemd/system/timesmedia-worker.service
+  systemctl daemon-reload
+  rm -rf -- "$WEB_CODE" "$NODE_CODE"
+  if (( purge )); then
+    confirm "--purge-data BORRARÁ estado, secretos y multimedia. ¿CONFIRMAS?" || exit 1
+    rm -rf -- "$WEB_STATE" "$NODE_STATE" /srv/timesmedia /etc/timesmedia
+  fi
+  ok "Desinstalación terminada."
+}
+
+usage(){
+  cat <<'USAGE'
+TimesMedia CLI
+  timesmedia status
+  timesmedia logs [web|scheduler|node|worker|all]
+  timesmedia health
+  timesmedia security-check
+  timesmedia update [web|node|all]
+  timesmedia repair [web|node|all]
+  timesmedia backup [--with-media]
+  timesmedia restore /ruta/backup.tar.gz
+  timesmedia node-token
+  timesmedia uninstall [--purge-data]
+USAGE
+}
+
+case "${1:-}" in
+  status) status_cmd;;
+  logs) logs_cmd "${2:-all}";;
+  health) health_cmd;;
+  security-check) security_check;;
+  update) update_cmd "${2:-all}";;
+  repair) repair_cmd "${2:-all}";;
+  backup) backup_cmd "${2:-}";;
+  restore) restore_cmd "${2:-}";;
+  node-token) node_token_cmd;;
+  uninstall) uninstall_cmd "${2:-}";;
+  -h|--help|help|"") usage;;
+  *) die "Comando desconocido: $1";;
+esac
