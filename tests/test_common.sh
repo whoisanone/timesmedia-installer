@@ -69,6 +69,7 @@ swap_line=$(grep -nF 'swap_code "$stage" "$NODE_CODE"' "$install_script" | tail 
 venv_line=$(grep -nF 'python_venv_build_as timesmedia-node "$NODE_CODE"' "$install_script" | tail -n1 | cut -d: -f1)
 [[ -n "$swap_line" && -n "$venv_line" && "$venv_line" -gt "$swap_line" ]] || fail "El venv NODE no se construye después del swap final"
 grep -Fq 'node) install_node "${2:-}"' "$install_script" || fail "Falta routing de node --fresh"
+grep -Fq 'apt_install aria2 ca-certificates curl ffmpeg git megatools openssl python3 python3-venv' "$install_script" || fail "NODE debe instalar soporte para enlaces públicos de MEGA"
 grep -Fq 'fresh_node_reset' "$install_script" || fail "Falta reset limpio de NODE"
 grep -Fq 'web_ip="${TM_WEB_IP:-}"' "$install_script" || fail "Falta IP WEB no interactiva"
 grep -Fq 'python_module_check_as timesmedia-node "$NODE_CODE" gunicorn --version' "$install_script" || fail "La comprobación de Gunicorn no fija un cwd accesible"

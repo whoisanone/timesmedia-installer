@@ -323,7 +323,7 @@ install_node(){
   [[ -z "$mode" || "$mode" == "--fresh" ]] || die "Uso: $0 node [--fresh]"
   [[ "$mode" != "--fresh" ]] || TM_FRESH_NODE=1
   log "Preparando TimesMedia NODE ${INSTALLER_VERSION}..."
-  apt_install aria2 ca-certificates curl ffmpeg git openssl python3 python3-venv
+  apt_install aria2 ca-certificates curl ffmpeg git megatools openssl python3 python3-venv
   install -d -m 755 /opt /etc/timesmedia /srv/timesmedia
 
   # Authenticate and obtain a complete source checkout before deleting anything.
