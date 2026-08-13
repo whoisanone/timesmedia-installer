@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 SELF_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-if [[ -f /usr/local/lib/timesmedia/common.sh ]]; then
+if [[ -f /usr/local/lib/timesmedia/lib/common.sh ]]; then
+  # shellcheck source=/dev/null
+  source /usr/local/lib/timesmedia/lib/common.sh
+elif [[ -f /usr/local/lib/timesmedia/common.sh ]]; then
+  # Compatibility with CLI layouts installed before 8.1.7.
   # shellcheck source=/dev/null
   source /usr/local/lib/timesmedia/common.sh
 elif [[ -f "$SELF_DIR/lib/common.sh" ]]; then

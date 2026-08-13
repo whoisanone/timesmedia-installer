@@ -83,4 +83,12 @@ grep -Fq 'wait_http http://127.0.0.1:5000/ 5' "$install_script" || fail "La inst
 grep -Fq 'INSTALLER_VERSION=$(<"$SCRIPT_DIR/VERSION")' "$install_script" || fail "La versión mostrada por el instalador sigue hardcodeada"
 grep -Fq 'curl -fsS --max-time 4 http://127.0.0.1:5000/ >/dev/null' "$ROOT/timesmedia" || fail "timesmedia health no comprueba la portada"
 
+# The persisted updater must include every relative dependency it needs. A
+# previous layout copied common.sh one directory too high and omitted VERSION,
+# so `timesmedia update` failed before it could update anything.
+grep -Fq 'install -d -m 755 /usr/local/lib/timesmedia /usr/local/lib/timesmedia/lib' "$install_script" || fail "install_cli no crea el layout lib/ persistente"
+grep -Fq 'install -m 644 "$SCRIPT_DIR/lib/common.sh" /usr/local/lib/timesmedia/lib/common.sh' "$install_script" || fail "install_cli no copia lib/common.sh donde lo consume el actualizador"
+grep -Fq 'install -m 644 "$SCRIPT_DIR/VERSION" /usr/local/lib/timesmedia/VERSION' "$install_script" || fail "install_cli no copia VERSION para futuras actualizaciones"
+grep -Fq 'source /usr/local/lib/timesmedia/lib/common.sh' "$ROOT/timesmedia" || fail "timesmedia no usa el layout persistente nuevo"
+
 printf 'OK: common runtime regressions\n'
