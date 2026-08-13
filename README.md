@@ -1,6 +1,8 @@
-# TimesMedia Installer 8.1.7
+# TimesMedia Installer 9.0.0
 
 Instalador y CLI de mantenimiento para los repositorios privados de TimesMedia.
+
+La versión 9.0 instala `megatools` en el NODE para enlaces públicos de MEGA y mantiene WEB/NODE actualizables juntos con `sudo timesmedia update all`.
 
 ## Uso
 
