@@ -448,7 +448,12 @@ EOFNET
 
 install_cli(){
   install -m 755 "$SCRIPT_DIR/timesmedia" /usr/local/sbin/timesmedia
-  install -d -m 755 /usr/local/lib/timesmedia
+  install -d -m 755 /usr/local/lib/timesmedia /usr/local/lib/timesmedia/lib
+  # Keep the installed tree self-contained: install-timesmedia.sh sources
+  # lib/common.sh relative to its own directory and reads VERSION from there.
+  install -m 644 "$SCRIPT_DIR/lib/common.sh" /usr/local/lib/timesmedia/lib/common.sh
+  install -m 644 "$SCRIPT_DIR/VERSION" /usr/local/lib/timesmedia/VERSION
+  # Compatibility for CLI copies installed before 8.1.7.
   install -m 644 "$SCRIPT_DIR/lib/common.sh" /usr/local/lib/timesmedia/common.sh
   install -m 700 "$SCRIPT_DIR/install-timesmedia.sh" /usr/local/lib/timesmedia/install-timesmedia.sh
 }
